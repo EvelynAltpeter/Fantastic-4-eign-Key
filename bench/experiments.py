@@ -181,10 +181,89 @@ def e6_bplus_orders(writer: ResultsWriter, tracks: list[dict], reps: int) -> Non
 
         print(f"E6: order {order} finished", flush=True)
 
+
+def e7_duplicate_keys(writer: ResultsWriter, tracks: list[dict], reps: int) -> None:
+    """E7: Compare index performance with unique and duplicate keys."""
+
+    columns = ("track_id", "track_genre", "popularity")
+
+    for column in columns:
+        pairs = key_value_pairs(tracks, column)
+        keys = [key for key, _ in pairs]
+
+        # Prepare the same queries for every index.
+        hits = point_queries(keys, 500, hit_rate=1.0, seed=SEED)
+
+        # Range queries are required for popularity.
+        ranges = (
+            range_queries(keys, 500, selectivity=0.01, seed=SEED)
+            if column == "popularity"
+            else None
+        )
+
+        print(f"E7: testing column {column}", flush=True)
+
+        for name in ALL_INDEXES:
+            for rep in range(reps):
+                index = make_index(name)
+
+                common = dict(
+                    experiment="E7",
+                    dataset="spotify",
+                    key_column=column,
+                    insert_order="file",
+                    n_keys=len(pairs),
+                    rep=rep,
+                )
+
+                # Measure index build time.
+                build_ns = time_build(index, pairs)
+                writer.record(
+                    index, **common,
+                    operation="build",
+                    operation_param="",
+                    n_ops=len(pairs),
+                    total_ns=build_ns,
+                )
+
+                # Measure successful point lookups.
+                index.reset_stats()
+                hit_ns = time_batch(index.search, hits)
+                writer.record(
+                    index, **common,
+                    operation="point_hit",
+                    operation_param=1.0,
+                    n_ops=len(hits),
+                    total_ns=hit_ns,
+                    height=index.structure_info().get("height", ""),
+                )
+
+                # Measure range queries on popularity.
+                if ranges is not None:
+                    index.reset_stats()
+                    range_ns = time_batch(
+                        lambda bounds: index.range_search(*bounds),
+                        ranges,
+                    )
+                    writer.record(
+                        index, **common,
+                        operation="range",
+                        operation_param=0.01,
+                        n_ops=len(ranges),
+                        total_ns=range_ns,
+                        height=index.structure_info().get("height", ""),
+                    )
+
+            print(f"E7: {column} / {name} finished", flush=True)
+
+    print("E7: all experiments finished", flush=True)
+
+
 # Register experiments here: name -> function(writer, tracks, reps).
 EXPERIMENTS: dict[str, Callable[[ResultsWriter, list[dict], int], None]] = {
     "example": example_point_lookups,
     "e6": e6_bplus_orders,
+    "e7": e7_duplicate_keys,
 }
 
 
