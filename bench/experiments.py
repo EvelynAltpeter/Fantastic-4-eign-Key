@@ -29,6 +29,8 @@ from bench.timing import build_memory_bytes, time_batch, time_build
 from indexes import ALL_INDEXES, make_index
 from loaders.spotify import key_value_pairs, load_tracks
 
+from datagen.synthetic import point_queries, range_queries
+
 SEED = 4300
 
 
@@ -67,10 +69,122 @@ def example_point_lookups(writer: ResultsWriter, tracks: list[dict], reps: int) 
                 )
             print(f"  n={n:>7,}  {name:<14} done", flush=True)
 
+def e6_bplus_orders(writer: ResultsWriter, tracks: list[dict], reps: int) -> None:
+    """E6: Compare B+ tree orders for build, point, and range performance."""
+
+    orders = (3, 4, 8, 16, 32, 64, 128, 256, 512)
+
+    # Prepare data before timing.
+    track_pairs = key_value_pairs(tracks, "track_id")
+    tempo_pairs = key_value_pairs(tracks, "tempo")
+
+    track_keys = [key for key, _ in track_pairs]
+    tempo_keys = [key for key, _ in tempo_pairs]
+
+    # Point lookups: hits and misses, with the same workload for every order.
+    point_hits = point_queries(track_keys, 500, hit_rate=1.0, seed=SEED)
+    point_misses = point_queries(track_keys, 500, hit_rate=0.0, seed=SEED)
+
+    # Range queries: approximately 1% of distinct tempo keys per query.
+    ranges = range_queries(tempo_keys, 500, selectivity=0.01, seed=SEED)
+
+    for order in orders:
+        print(f"E6: testing B+ tree order {order}", flush=True)
+
+        for rep in range(reps):
+            # Build a fresh tree using track_id.
+            index = make_index("bplus_tree", order=order)
+
+            common = dict(
+                experiment="E6",
+                dataset="spotify",
+                key_column="track_id",
+                insert_order="file",
+                n_keys=len(track_pairs),
+                rep=rep,
+            )
+
+            build_ns = time_build(index, track_pairs)
+
+            writer.record(
+                index, **common,
+                operation="build",
+                operation_param="",
+                n_ops=len(track_pairs),
+                total_ns=build_ns,
+            )
+
+            # Measure successful point lookups.
+            index.reset_stats()
+            hit_ns = time_batch(index.search, point_hits)
+
+            writer.record(
+                index, **common,
+                operation="point_hit",
+                operation_param=1.0,
+                n_ops=len(point_hits),
+                total_ns=hit_ns,
+                height=index.structure_info().get("height", ""),
+            )
+
+            # Measure unsuccessful point lookups.
+            index.reset_stats()
+            miss_ns = time_batch(index.search, point_misses)
+
+            writer.record(
+                index, **common,
+                operation="point_miss",
+                operation_param=0.0,
+                n_ops=len(point_misses),
+                total_ns=miss_ns,
+                height=index.structure_info().get("height", ""),
+            )
+
+            # Build a separate B+ tree indexed by tempo.
+            tempo_index = make_index("bplus_tree", order=order)
+
+            tempo_common = dict(
+                experiment="E6",
+                dataset="spotify",
+                key_column="tempo",
+                insert_order="file",
+                n_keys=len(tempo_pairs),
+                rep=rep,
+            )
+
+            tempo_build_ns = time_build(tempo_index, tempo_pairs)
+
+            writer.record(
+                tempo_index, **tempo_common,
+                operation="build",
+                operation_param="",
+                n_ops=len(tempo_pairs),
+                total_ns=tempo_build_ns,
+            )
+
+            # Measure range queries using the tempo index.
+            tempo_index.reset_stats()
+
+            range_ns = time_batch(
+                lambda bounds: tempo_index.range_search(*bounds),
+                ranges,
+            )
+
+            writer.record(
+                tempo_index, **tempo_common,
+                operation="range",
+                operation_param=0.01,
+                n_ops=len(ranges),
+                total_ns=range_ns,
+                height=tempo_index.structure_info().get("height", ""),
+            )
+
+        print(f"E6: order {order} finished", flush=True)
 
 # Register experiments here: name -> function(writer, tracks, reps).
 EXPERIMENTS: dict[str, Callable[[ResultsWriter, list[dict], int], None]] = {
     "example": example_point_lookups,
+    "e6": e6_bplus_orders,
 }
 
 
