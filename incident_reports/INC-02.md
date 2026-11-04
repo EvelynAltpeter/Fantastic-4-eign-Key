@@ -22,6 +22,12 @@ The optimized implementation was significantly faster for narrow ranges. At sele
 
 However, at selectivity 0.25, the fixed implementation was approximately 34.5% slower, indicating that the optimization is most beneficial for selective range queries.
 
+### Figure 1: B+ Tree Range Query Performance
+
+![B+ Tree before and after range-query performance](figures/INC-02-performance.png)
+
+Figure 1 compares the median query execution times of the original B+ tree implementation (`dd70faa`) and the optimized implementation (`a0e890d`) across six range selectivities.
+
 ### Table 2: B+ Tree Diagnostic Results
 
 We inserted 10,000 sequential integer keys into a B+ tree with order 32.
@@ -136,10 +142,44 @@ The fix preserves correct range-search results while reducing unnecessary operat
 
 ### Git Diff
 
-The exact code changes can be viewed using:
+The following diff shows the changes made to optimize the B+ tree range search.
 
-```bash
-git diff 53e8911 a0e890d -- indexes/bplus_tree.py
+```diff
+diff --git a/indexes/bplus_tree.py b/indexes/bplus_tree.py
+index 7005649..75654d6 100644
+--- a/indexes/bplus_tree.py
++++ b/indexes/bplus_tree.py
+@@ -172,8 +172,28 @@ class BPlusTreeIndex(Index):
+ 
+     def range_search(self, lo: Any, hi: Any) -> list[Any]:
+         result: list[Any] = []
+-        if lo <= hi:
+-            self._collect_range(self._root, lo, hi, result)
++
++        if lo > hi:
++            return result
++
++        leaf = self._find_leaf(lo)
++        i = self._bisect_left(leaf.keys, lo)
++
++        while leaf is not None:
++            while i < len(leaf.keys):
++                self.stats.comparisons += 1
++
++                if leaf.keys[i] > hi:
++                    return result
++
++                result.extend(leaf.values[i])
++                i += 1
++
++            leaf = leaf.next
++            i = 0
++
++            if leaf is not None:
++                self.stats.nodes_visited += 1
+         return result
+ 
+     def _collect_range(self, node: _Node, lo: Any, hi: Any, out: list[Any]) -> None:
 ```
 
 ## Verification
