@@ -1,2 +1,3 @@
 machine_id,member,computer_model,cpu_model,cpu_cores,ram_gb,os,docker_cpus,docker_memory_gb,power
 annie-mbp,annie,MacBook Pro (MacBookPro16 3),Quad-Core Intel Core i5,4,8,macOS 15.7.9,8,3.82,plugged_in
+evelyn-mbp,evelyn,MacBook Pro (Mac15-7),Apple M3 Pro,12,36,macOS 15.6.1,12,8.0,plugged in
