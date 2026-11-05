@@ -29,7 +29,12 @@ from bench.timing import build_memory_bytes, time_batch, time_build
 from indexes import ALL_INDEXES, make_index
 from loaders.spotify import key_value_pairs, load_tracks
 
-from datagen.synthetic import point_queries, range_queries
+from datagen.synthetic import (
+    random_keys,
+    arrange,
+    point_queries,
+    range_queries,
+)
 
 SEED = 4300
 
@@ -358,6 +363,51 @@ def E4_prefix_titles(writer: ResultsWriter, tracks: list[dict], reps: int) -> No
                               height=index.structure_info().get("height", ""))
         print(f"  E4 {name} done", flush=True)
 
+
+def E5_insertion_order(writer: ResultsWriter, tracks: list[dict], reps: int) -> None:
+    """E5: insertion-order sensitivity on reproducible, distinct synthetic keys.
+
+    Every index gets identical key sets, insertion orders, and hit queries.
+    Record independent fresh-build and batched lookup measurements.
+    """
+    sizes = (1_000, 10_000, 100_000)
+    orders = ("random", "sorted", "reversed", "nearly_sorted")
+
+    for n in sizes:
+        # Generate all workloads before either build or lookup timing.
+        keys = random_keys(n, length=12,
+                           alphabet="abcdefghijklmnopqrstuvwxyz0123456789",
+                           seed=SEED + n)
+        queries = point_queries(keys, N_QUERIES, hit_rate=1.0, seed=SEED + n + 1)
+
+        for order in orders:
+            ordered_keys = arrange(keys, order=order, seed=SEED + n + 2)
+            pairs = [(key, row_id) for row_id, key in enumerate(ordered_keys)]
+
+            for name in ALL_INDEXES:
+                for rep in range(reps):
+                    common = dict(experiment="E5_insertion_order",
+                                  dataset="synthetic", key_column="synthetic_string",
+                                  insert_order=order, n_keys=n, rep=rep)
+
+                    index = make_index(name)
+                    index.reset_stats()
+                    build_ns = time_build(index, pairs)
+                    # writer.record captures rotations/splits via index.stats.
+                    writer.record(index, **common, operation="build",
+                                  operation_param="", n_ops=n, total_ns=build_ns,
+                                  height=index.structure_info().get("height", ""))
+
+                    index.reset_stats()
+                    lookup_ns = time_batch(index.search, queries)
+                    writer.record(index, **common, operation="point_hit",
+                                  operation_param=1.0, n_ops=len(queries),
+                                  total_ns=lookup_ns,
+                                  height=index.structure_info().get("height", ""))
+
+                print(f"  E5 n={n:,} {order:<13} {name} done", flush=True)
+
+
 # Register experiments here: name -> function(writer, tracks, reps).
 EXPERIMENTS: dict[str, Callable[[ResultsWriter, list[dict], int], None]] = {
     "example": example_point_lookups,
@@ -367,6 +417,7 @@ EXPERIMENTS: dict[str, Callable[[ResultsWriter, list[dict], int], None]] = {
     "E2_point_lookups": E2_point_lookups,
     "E3_range_tempo": E3_range_tempo,
     "E4_prefix_titles": E4_prefix_titles,
+    "E5_insertion_order": E5_insertion_order,
 }
 
 
@@ -396,3 +447,6 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
 
 if __name__ == "__main__":
     main()
+
+
+
