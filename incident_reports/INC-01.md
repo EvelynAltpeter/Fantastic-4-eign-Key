@@ -1,15 +1,43 @@
 
 # INC-01: AVL Tree Incorrect Height Updates During Rotations
 
-## 1. Evidence
 
-The AVL tree had a performance bug caused by incorrect height updates during rotations. The E5 insertion-order experiment showed that the original implementation performed excessive rotations and maintained taller trees than the corrected implementation.
+# INC-01: AVL Tree Incorrect Height Updates During Rotations
 
-We tested four insertion orders (sorted, reversed, random, and nearly sorted) with 1,000, 10,000, and 100,000 keys.
+## Summary
+
+The AVL tree had a performance bug caused by incorrect height updates during left and right rotations, resulting in excessive rotations, taller trees, and slower insertion times. In the E5 insertion-order experiment with 100,000 randomly inserted keys, build time decreased from 1,525.09 ms to 712.70 ms after the fix, a 53.3% improvement. The issue was resolved by updating the lower node's height before recalculating the new parent's height during rotations.
+
+## Detection
+
+The issue was identified through the E5 insertion-order sensitivity experiment, which tested sorted, reversed, random, and nearly sorted insertion orders at 1,000, 10,000, and 100,000 keys.
+
+The performance comparison in `incident_reports/figures/INC-01-performance.png` showed that the original AVL implementation performed substantially more rotations, maintained taller trees, and required more time to build the index than the corrected implementation.
+
+The unusually high rotation counts and tree heights suggested that the AVL tree was not maintaining its height and balance information correctly.
+
+## Expected vs. observed
+
+According to AVL tree theory, individual insertions should take O(log n) time because the tree maintains logarithmic height. Rotations should restore balance efficiently, and the stored height information should accurately reflect the tree structure.
+
+However, the original implementation performed excessive rotations and produced taller trees than the corrected implementation.
+
+For random insertion of 100,000 keys:
+
+- Before fix: 1,468,392 rotations, tree height 26, and build time 1,525.09 ms.
+- After fix: 70,011 rotations, tree height 20, and build time 712.70 ms.
+
+This represents approximately 95% fewer rotations, a reduction in tree height from 26 to 20, and a 53.3% improvement in build time.
+
+The same pattern appeared across all four insertion orders. These results indicate that the original implementation was performing unnecessary rebalancing because of incorrect height information.
+
+## Evidence
 
 The before-fix implementation came from commit `c2eab0a`. The temporary worktree rerun recorded `code_version=unknown`. The after-fix experiment recorded `code_version=b36e595`.
 
-Both experiments were run on my Mac (`trisha-mbp`) using the same E5 workload, deterministic seed, and five repetitions.
+Both experiments were run on the same machine (`trisha-mbp`) using the E5 workload, deterministic seed, and five repetitions per configuration.
+
+We tested four insertion orders (sorted, reversed, random, and nearly sorted) with 1,000, 10,000, and 100,000 keys.
 
 ### Performance Comparison (100,000 Keys)
 
@@ -37,9 +65,9 @@ For random insertion with 100,000 keys, runtime decreased by approximately 53%, 
 
 ![AVL Tree Before and After Fix](figures/INC-01-performance.png)
 
-The figure was generated from the E5 results using `incident_reports/plot_avl.py`.
+**Figure 1. AVL Tree Performance Before and After Fix (E5, 100,000 Keys).** The corrected implementation reduced rotations, tree height, and build time across all four insertion orders. Random insertion showed the largest build-time improvement of 53.3%. Figure generated using `incident_reports/plot_avl.py`.
 
-## 2. Root Cause
+## Root cause
 
 **File:** `indexes/avl_tree.py`
 
@@ -59,7 +87,7 @@ This meant the new parent could calculate its height using outdated height infor
 
 The tree could still return correct results because rotations preserved binary-search-tree key ordering. However, the unnecessary rebalancing increased runtime and caused the tree to become taller than expected.
 
-## 3. Fix
+## Fix
 
 I corrected the order of height updates in both rotation functions.
 
@@ -69,7 +97,9 @@ I corrected the order of height updates in both rotation functions.
 
 Generated using:
 
-    git diff c2eab0a 53e8911 -- indexes/avl_tree.py
+```bash
+git diff c2eab0a 53e8911 -- indexes/avl_tree.py
+```
 
 ```diff
 diff --git a/indexes/avl_tree.py b/indexes/avl_tree.py
@@ -101,7 +131,7 @@ The corrected implementation updates the lower node's height before updating the
 
 The full diff is also saved in `incident_reports/INC-01-diff.txt`.
 
-## 4. Verification
+## Verification
 
 To verify the fix, I reran the E5 insertion-order experiment using both the original buggy AVL implementation and the corrected implementation.
 
@@ -124,15 +154,19 @@ At 100,000 keys, all four insertion orders showed improvements in runtime, rotat
 
 I ran:
 
-    make test
+```bash
+make test
+```
 
 Results:
 
-    168 passed, 3 skipped in 4.00s
+```text
+168 passed, 3 skipped in 4.00s
+```
 
 All existing tests continued to pass after the fix.
 
-## 5. Impact on Recommendations
+## Impact on recommendations
 
 This bug made the AVL tree appear slower than it should have been, particularly for workloads involving many insertions.
 
@@ -150,11 +184,11 @@ For exact-match-only workloads, hash tables may still be preferable because of t
 
 Therefore, the bug could have caused us to underestimate AVL performance for insertion-heavy features. The final F1–F4 recommendations should use the corrected benchmark results rather than the original buggy measurements.
 
-## 6. Why the Tests Didn't Catch It
+## Why the tests didn't catch it
 
 The existing tests primarily checked functional correctness, such as whether inserted values could be retrieved correctly.
 
-The height-update bug did not necessarily change the values returned by searches because the rotations still preserved binary-search-tree ordering.
+The height-update bug did not necessarily change the values returned by searches because the rotations still preserved binary-search-tree key ordering.
 
 However, the tests did not sufficiently check internal height metadata or excessive rotations.
 
@@ -169,3 +203,4 @@ A stronger test would:
 These tests could detect incorrect height metadata even when searches returned the expected results.
 
 This incident demonstrates why data structure testing should verify both functional correctness and internal structural invariants, rather than relying only on correct query results.
+

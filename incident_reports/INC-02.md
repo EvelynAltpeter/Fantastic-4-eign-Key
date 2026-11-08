@@ -1,6 +1,32 @@
 
 # INC-02: B+ Tree Inefficient Range Search
 
+## Summary
+
+The B+ tree had a performance issue where range searches recursively traversed the entire tree, even when the requested range contained very few matching keys. In the E3 range-query experiment, the original implementation took 1,345,678 ns per query at 0.0001 selectivity, compared with 3,556 ns after the fix, representing a 378.4x speedup. The issue was resolved by navigating directly to the starting leaf and scanning through linked leaves instead of traversing unrelated subtrees.
+
+## Detection
+
+The performance issue was identified through the E3 range-query experiment, which measured B+ tree query times across six selectivity levels: 0.0001, 0.001, 0.01, 0.05, 0.10, and 0.25.
+
+The results, shown in `incident_reports/figures/INC-02-performance.png`, revealed that the original implementation took approximately 1.35–1.88 ms per query regardless of how narrow the requested range was.
+
+This was suspicious because a B+ tree should efficiently locate the starting key and scan only the relevant portion of its linked leaves. The relatively high query times for very narrow ranges suggested unnecessary traversal.
+
+## Expected vs. observed
+
+According to B+ tree theory, a range search should take approximately O(log n + k) time, where n is the number of indexed keys and k is the number of matching keys, assuming a balanced tree and efficient sequential leaf scanning.
+
+For narrow ranges, the algorithm should visit only the nodes along the search path and the leaf nodes containing matching keys, rather than traversing the entire tree.
+
+However, the original implementation recursively visited every subtree regardless of the requested range, resulting in approximately O(n) traversal work.
+
+At selectivity 0.0001, the original implementation required 1,345,678 ns per query, compared with 3,556 ns after the fix. At selectivity 0.01, query time decreased from 1,404,689 ns to 110,682 ns, representing a 12.7x speedup.
+
+The optimized implementation also demonstrated more efficient node traversal. In a diagnostic test with 10,000 keys, a narrow query matching 11 keys visited only 5 nodes, while a full-range query matching 10,000 keys visited 628 nodes.
+
+These results show that the corrected implementation scales its traversal work with the requested range rather than scanning unrelated subtrees.
+
 ## Evidence
 
 The original B+ tree implementation performed range searches by recursively traversing the entire tree, even when the requested range contained very few matching keys. This resulted in unnecessary node visits and slower query performance.
@@ -26,13 +52,14 @@ However, at selectivity 0.25, the fixed implementation was approximately 34.5% s
 
 ![B+ Tree before and after range-query performance](figures/INC-02-performance.png)
 
-Figure 1 compares the median query execution times of the original B+ tree implementation (`dd70faa`) and the optimized implementation (`a0e890d`) across six range selectivities.
+**Figure 1. B+ Tree Range Query Performance Before and After Fix (E3).** The optimized implementation significantly reduced median query time for narrow ranges, achieving a 378.4x speedup at 0.0001 selectivity. However, at 0.25 selectivity, the fixed implementation was approximately 34.5% slower. Figure generated using `incident_reports/plot_bplus.py`.
 
 ### Table 2: B+ Tree Diagnostic Results
 
 We inserted 10,000 sequential integer keys into a B+ tree with order 32.
 
 The resulting tree had:
+
 - Height: 4
 - Distinct keys: 10,000
 - Leaves: 625
@@ -48,7 +75,7 @@ These diagnostic results were collected before correcting a duplicate starting-l
 
 The diagnostic shows that narrow range queries visit significantly fewer nodes than wide range queries.
 
-## Root Cause
+## Root cause
 
 **File:** `indexes/bplus_tree.py`
 
@@ -150,7 +177,6 @@ index 7005649..75654d6 100644
 --- a/indexes/bplus_tree.py
 +++ b/indexes/bplus_tree.py
 @@ -172,8 +172,28 @@ class BPlusTreeIndex(Index):
- 
      def range_search(self, lo: Any, hi: Any) -> list[Any]:
          result: list[Any] = []
 -        if lo <= hi:
@@ -178,7 +204,7 @@ index 7005649..75654d6 100644
 +            if leaf is not None:
 +                self.stats.nodes_visited += 1
          return result
- 
+
      def _collect_range(self, node: _Node, lo: Any, hi: Any, out: list[Any]) -> None:
 ```
 
@@ -215,7 +241,7 @@ The diagnostic results also demonstrated that the optimized B+ tree visits fewer
 
 Overall, the fix preserved correctness and significantly improved selective range-query performance.
 
-## Impact on Recommendations
+## Impact on recommendations
 
 This bug primarily affects **F3: Workout Mode**, which requires finding songs within a specified tempo range.
 
@@ -235,7 +261,7 @@ Therefore, the final recommendation for F3 should consider expected range select
 
 The fix does not directly change F1 point lookups, F2 prefix searches, or F4 insertion performance.
 
-## Why the Tests Didn't Catch It
+## Why the tests didn't catch it
 
 The existing tests focused on whether range searches returned correct results rather than whether they performed operations efficiently.
 
