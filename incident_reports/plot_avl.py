@@ -1,13 +1,16 @@
+
 import csv
 from collections import defaultdict
 from pathlib import Path
 from statistics import median
 
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
 
 BEFORE = Path("incident_reports/evidence/INC-01-before.csv")
 AFTER = Path("results/timings.csv")
 OUTPUT = Path("incident_reports/figures/INC-01-performance.png")
+
 
 def load_data(path, version):
     groups = defaultdict(list)
@@ -43,21 +46,22 @@ def load_data(path, version):
         for key, rows in groups.items()
     }
 
+
 before = load_data(BEFORE, "unknown")
 after = load_data(AFTER, "b36e595")
 
 orders = ["sorted", "reversed", "random", "nearly_sorted"]
 n = 100000
 
-fig, axes = plt.subplots(1, 3, figsize=(17, 5))
+fig, axes = plt.subplots(1, 3, figsize=(17, 5.5))
 
 metrics = [
-    ("rotations", "Rotations"),
-    ("height", "Tree height"),
-    ("time_ms", "Build time (ms)"),
+    ("rotations", "Rotations", "Rotations (millions)"),
+    ("height", "Tree height", "Tree height (levels)"),
+    ("time_ms", "Build time", "Build time (ms)"),
 ]
 
-for ax, (metric, title) in zip(axes, metrics):
+for ax, (metric, title, ylabel) in zip(axes, metrics):
     x = range(len(orders))
     width = 0.35
 
@@ -70,6 +74,7 @@ for ax, (metric, title) in zip(axes, metrics):
         width,
         label="Before (buggy)"
     )
+
     ax.bar(
         [i + width / 2 for i in x],
         new,
@@ -79,14 +84,40 @@ for ax, (metric, title) in zip(axes, metrics):
 
     ax.set_xticks(list(x))
     ax.set_xticklabels(orders, rotation=20)
+
+    # Required axis labels and units
+    ax.set_xlabel("Insertion order")
+    ax.set_ylabel(ylabel)
+
     ax.set_title(title)
+
+    # Display rotations in millions
+    if metric == "rotations":
+        ax.yaxis.set_major_formatter(
+            FuncFormatter(
+                lambda value, pos: f"{value / 1_000_000:.1f}"
+            )
+        )
+        ax.yaxis.offsetText.set_visible(False)
+
     ax.legend()
 
-fig.suptitle("AVL E5 Before vs After — 100,000 Keys")
+fig.suptitle(
+    "AVL E5 Before vs After — 100,000 Keys",
+    fontsize=15
+)
+
 fig.tight_layout()
 
 OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-fig.savefig(OUTPUT, dpi=180, bbox_inches="tight")
+
+fig.savefig(
+    OUTPUT,
+    dpi=180,
+    bbox_inches="tight"
+)
+
+plt.close(fig)
 
 print("Saved:", OUTPUT)
 
